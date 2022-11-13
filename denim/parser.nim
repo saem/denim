@@ -45,7 +45,7 @@ proc addStrLit(f: var ParsedFrag, arg: int) =
   f.data.add ParserData(kind: pdStrLit, tokenId: TokenId(arg + 1))
 
 let parser = peg(denim, TokenData, frag: ParsedFrag):
-  literals    <- >[tkStrLit]
+  literals    <- [tkStrLit]
 
   callCmd     <- >[tkSymbol] * >callCmdArg * *([tkComma] * >callCmdArg):
     frag.addCmd @1
