@@ -13,8 +13,9 @@ type
     tkInvalid
     tkEof
     tkComma
-    tkSymbol
+    tkIdent
     tkStrLit
+    tkCharLit
     # tkSpace
   
   TokenData* = object
@@ -40,6 +41,15 @@ grammar "strLit":
   strBody   <- ?escape * *( +({'\x20'..'\xff'} - {'"'} - {'\\'}) * *escape)
   strLit    <- '"' * strBody * '"'
 
+grammar "charLit":
+  escape    <- '\\' * ( spaceChar | punctChar | ctrlChar | charPoint )
+  spaceChar <- { 'r', 'c', 'n', 'l', 'f', 't', 'v' }
+  punctChar <- { '\\', '"', '\'' }
+  charPoint <- +Digit | ('x' * Xdigit[2])
+  ctrlChar  <- { 'a', 'b', 'e' }
+  charBody  <- escape | ({'\x20'..'\xff'} - {'\''} - {'\\'})
+  charLit   <- '"' * charBody * '"'
+
 proc addComma(f: var LexFrag, width: int) =
   f.tokens.add TokenData(kind: tkComma,
                          ln: f.ln,
@@ -47,7 +57,7 @@ proc addComma(f: var LexFrag, width: int) =
   f.col += width
 
 proc addIdent(f: var LexFrag, ident: string, width: int) =
-  f.tokens.add TokenData(kind: tkSymbol,
+  f.tokens.add TokenData(kind: tkIdent,
                          ln: f.ln,
                          col: f.col,
                          str: ident)
@@ -55,6 +65,13 @@ proc addIdent(f: var LexFrag, ident: string, width: int) =
 
 proc addStrLit(f: var LexFrag, lit: string, width: int) =
   f.tokens.add TokenData(kind: tkStrLit,
+                         ln: f.ln,
+                         col: f.col,
+                         str: lit)
+  f.col += width
+
+proc addCharLit(f: var LexFrag, lit: string, width: int) =
+  f.tokens.add TokenData(kind: tkCharLit,
                          ln: f.ln,
                          col: f.col,
                          str: lit)
@@ -68,13 +85,18 @@ let lexer = peg(tokens, frag: LexFrag):
   tokComma <- "," * S:
     frag.addComma capture[0].s.len
 
-  tokIdent <- >(Alpha * *Alnum) * S:
+  tokIdent <- >(Alpha | '_') * *(Alpha | Digit | '_') * S:
     frag.addIdent $1, capture[0].s.len
 
   strLit   <- >strLit.strLit * S:
     frag.addStrLit $1, capture[0].s.len
+  
+  charLit  <- >charLit.charLit * S:
+    frag.addCharLit $1, capture[0].s.len
+  
+  literal  <- strLit | charLit
 
-  token    <- +(tokIdent | tokComma | strLit)
+  token    <- +(tokIdent | tokComma | literal)
 
   tokens   <- *token * !1
 

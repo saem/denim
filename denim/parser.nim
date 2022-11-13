@@ -34,7 +34,7 @@ proc addCmd(f: var ParsedFrag, cmd: int) =
 proc addCmdNthArg(f: var ParsedFrag, arg: int) =
   let tokenId = TokenId(arg + 1)
   case f.lexedFrag[tokenId].kind
-  of tkSymbol:
+  of tkIdent:
     f.data.add ParserData(kind: pdIdent, tokenId: tokenId)
   of tkStrLit:
     f.data.add ParserData(kind: pdStrLit, tokenId: tokenId)
@@ -47,11 +47,11 @@ proc addStrLit(f: var ParsedFrag, arg: int) =
 let parser = peg(denim, TokenData, frag: ParsedFrag):
   literals    <- [tkStrLit]
 
-  callCmd     <- >[tkSymbol] * >callCmdArg * *([tkComma] * >callCmdArg):
+  callCmd     <- >[tkIdent] * >callCmdArg * *([tkComma] * >callCmdArg):
     frag.addCmd @1
     for i in 2..<capture.len:
       frag.addCmdNthArg capture[i].si
-  callCmdArg  <- [tkSymbol] | literals
+  callCmdArg  <- [tkIdent] | literals
 
   stmt        <- (callCmd)
 
