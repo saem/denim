@@ -1,65 +1,70 @@
 ## bootstrap compiler for Denim, written in Nim
 
-let source = """(:cmd echo (:strLit "Hello, World!"))"""
+import
+  denim/[
+    idioms,
+    main,
+  ],
+  std/[
+    os,
+    parseopt,
+    strutils,
+  ]
 
-# type
-#   SyntaxFragmentKind = enum
-#     sfk
-#   SyntaxFragment = object
-#     kind: SyntaxFragmentKind
+const usage = """
+denim <file.dnm>
+""".strip
 
 type
-  AstNodeDataKind = enum
-    astCommand
-    astIdent
-    astStrLit
+  ExitCode = enum
+    exitSuccess
+    exitErr
 
-  # SyntaxId = distinct int32
-  IdentId = distinct int32
-  StringLitId = distinct int32
+  ParseCliResult = enum
+    parseSuccess         ## successfully parsed cli params
+    parseQuitWithUsage   ## parsing failed, quit with usage message
 
-  AstFragEntry = object
-    # syntaxId: SyntaxId
-    case kind: AstNodeDataKind
-    of astCommand:
-      discard
-    of astIdent:
-      identId: IdentId
-    of astStrLit:
-      strId: StringLitId
+  CliState = object
+    fileArg: string
 
-  StringLitStorage = seq[string]
-  IdentStorage = seq[string]
+func initCliState(): CliState =
+  discard
 
-  AstFragment = object
-    # syntax: SyntaxFragment
-    nodes: seq[AstFragEntry]
-    strLits: StringLitStorage
-    idents: IdentStorage
+var
+  cliOptParser = initOptParser()
+  cliState = initCliState()
 
-  AstModule = object
-    name: string
-    ast = AstFragment
+proc parseCli(s: var CliState, p: var OptParser): ParseCliResult =
+  p.next()
+  case p.kind
+  of cmdArgument:
+    s.fileArg = p.key.strip
+    parseSuccess
+  else:
+    parseQuitWithUsage
 
-import experimental/sexp
+template quit(msg: string, code: ExitCode) =
+  quit msg, code.int
 
-proc parseModule(name: string, moduleSyn: SexpNode): AstModule =
-  
+proc runDenimMain(cli: CliState) =
+  discard
 
-let
-  actualModule =
-    parseModule:
-      convertSexp([newSSymbol("cmd"), "echo", [newSSymbol("strLit"), "Hello, World!"]])
-  expectedModule =
-    AstModule(
-      name: "foo",
-      ast: AstFragment(
-        nodes: [
-          AstFragEntry(kind: astCommand),
-          AstFragEntry(kind: astIdent, identId: IdentId 1),
-          AstFragEntry(kind: astStrLit, identId: StringLitId 1)
-        ],
-        idents: @["echo"],
-        strLits: @["Hello, World!"]
-      )
-    )
+case paramCount()
+of 0:
+  quit "no file name provided:\p\p" & usage, exitErr
+of 1:
+  case parseCli(cliState, cliOptParser)
+  of parseSuccess:
+    let (dir, name, ext) = cliState.fileArg.splitFile
+
+    if ext != "." & DenimFileExt:
+      quit "'" & cliState.fileArg & "' has the wrong file extension\p" & usage
+    
+    if name.invalidModuleName:
+      quit "'" & cliState.fileArg & "' is not a valid file name\p" & usage
+    
+    runDenimMain(cliState)
+  of parseQuitWithUsage:
+    quit usage, exitErr
+else:
+  quit usage, exitErr
