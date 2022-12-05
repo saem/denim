@@ -47,7 +47,8 @@ template quit(msg: string, code: ExitCode) =
   quit msg, code.int
 
 proc runDenimMain(cli: CliState) =
-  discard
+  let cmp = initCompiler(initHost())
+  cmp.run(cli.fileArg)
 
 case paramCount()
 of 0:
