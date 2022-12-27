@@ -38,12 +38,12 @@ type
     cbsEnumDecl = "enumDecl"
 
     # defintions, include initiatlization
-    cbsTypeDef = "typeDef"
-    cbsVarDef  = "varDef"
-    cbsFuncDef = "funcDef"
-    cbsEnumDef = "enumDef"
-    cbsDefBody = "body"
-    cbsParam   = "param"
+    cbsTypeDef  = "typeDef"
+    cbsVarDef   = "varDef"
+    cbsFuncDef  = "funcDef"
+    cbsEnumDef  = "enumDef"
+    cbsBlock    = "blk"
+    cbsParam    = "param"
 
     # expressions - literals
     cbsLitBool   = "litBool"
@@ -92,7 +92,7 @@ let foo = """
       (param (typInt) "argc")
       (param (typPtrPtr typChar) "argv")
     )
-    (
+    (blk
       (call "puts" (litStr "Hello, World!"))
     )
   )
@@ -125,6 +125,11 @@ func toCBkndSrcTypKind(s: string): Option[CBkndSrcTypKind] =
       return
 
 func parseType(frag: var CSrcFrag, stmt: SexpNode) =
+  ## parse a type node, eg: (typInt):
+  ##
+  ## - simple types don't use `extraId` or `width`
+  ## - pointers to simple types store the type directly in `extraId`
+  ## - TODO: implement the rest
   assert stmt.kind == SList
   assert stmt[0].kind == SSymbol
 
@@ -141,6 +146,37 @@ func parseType(frag: var CSrcFrag, stmt: SexpNode) =
   else:
     assert false, "unhandled type kind: " & $typK
 
+func parseParam(frag: var CSrcFrag, param: SexpNode) =
+  ## parse a `cbsParam` node, eg: (param (<type>) "name"):
+  ##
+  ## - `extraId` is the type node
+  ## - `width` is the id to `extraStr` for the param name
+  assert param.kind == SList
+  assert param.len == 3
+  assert param[0].kind == SSymbol
+  assert param[0].symbol == $cbsParam
+
+  let id = frag.node.len
+  frag.node.add CSrcFragNode(kind: cbsParam)
+  
+  const
+    typPos = 1
+    namePos = 2
+
+  frag.node[id].extraId = frag.node.len
+  parseType(frag, param[typPos])
+
+  assert param[namePos].kind == SString
+  frag.node[id].width = frag.extraStr.len
+  frag.extraStr.add param[namePos].str
+
+func parseBlk(frag: var CSrcFrag, body: SexpNode) =
+  ## parse a `cbsBlk` node (blk (<0..n|stmts>))
+  ##
+  ## TODO: finish implementing me
+  assert false, "IMPLEMENT ME"
+  discard
+
 func toCSrcFrag(s: SexpNode): CSrcFrag =
   var frag: CSrcFrag
 
@@ -151,36 +187,44 @@ func toCSrcFrag(s: SexpNode): CSrcFrag =
       frag.extraStr.add stmt[1].str
       frag.node.add CSrcFragNode(kind: k, extraId: strId)
     of cbsFuncDef:
+      assert stmt.len == 5 # 1: funcDef, 2: name, 3: type, 4: params, 5: body
+      
+      const
+        namePos = 1
+        typPos = 2
+        paramsPos = 3
+        bodyPos = 4
+
       let
         id = frag.node.len
         strId = frag.extraStr.len
-      frag.extraStr.add stmt[1].str
+      
+      frag.extraStr.add stmt[namePos].str
       frag.node.add CSrcFragNode(kind: k, extraId: frag.extraNode.len)
       
-      parseType(frag, stmt[2])
+      parseType(frag, stmt[typPos])
 
-      let bodyPos = stmt.len - 1
+      let params = stmt[paramsPos]
 
-      for i in 3..<stmt.len:
-        let s = stmt[i]
-        if i == bodyPos:
-          discard "implement me"
-        else:
-          assert s[0].kind == SSymbol
-          assert s[0].symbol == "param"
+      assert params.kind == SList, $stmt
 
-          # add param name
-          let strId = frag.extraStr.len
-          frag.extraStr.add s[2].str
-          
-          let paramId = frag.node.len
+      var fnArity = 0
 
-          frag.node.add CSrcFragNode(kind: cbsParam, extraId: strId)
-          
-          let typId = frag.node.len
-          parseType(frag, stmt[1])
+      case params.len
+      of 0:
+        discard
+      else:
+        for maybeParam in params.items:
+          frag.extraNode.add(frag.node.len)
+          inc fnArity
+          parseParam(frag, maybeParam)
 
-          frag.node[paramId].width = typId - paramId
+      # remember the body id and parse the body
+      frag.extraNode.add(frag.node.len) 
+      parseBlk(frag)
+
+      # set the node width to all the extra nodes we added (params + body)
+      frag.node[id].width = fnArity + 1 # the extra is for the body
     of cbsDefBody:
       assert false
     else:
@@ -211,4 +255,24 @@ func toCSrcFrag(s: SexpNode): CSrcFrag =
 
 #   discard
 
-echo parseSexp(foo).toCSrcFrag
+echo parseSexp(foo)[2].toCSrcFrag
+
+
+# # thinking about creating a schema to handle deserialization
+# type
+#   SexpSchemaKind* = enum
+#     ssStruct      ## fixed size list with a symbol
+#     ssList0toN    ## list of 0 to N of a schema
+#     ssSym         ## a specific symbol
+#     ssSymAny      ## any symbol, as long as it is one
+#     ssStrNonEmpty ## non-empty string
+#     ssStr         ## string that might be empty
+  
+#   SexpSchema* = object
+#     case kind: SexpSchemaKind:
+#       of ssStruct, ssList0toN:
+#         struct: seq[SexpSchema]
+#       of ssSym:
+#         sym: string
+#       of ssSymAny, ssStrNonEmpty, ssStr:
+#         discard
