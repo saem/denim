@@ -51,7 +51,7 @@ type
     cbsLitInt    = "litInt"
     cbsLitFloat  = "litFloat"
     cbsLitNull   = "litNull"
-    cbsLitString = "litString"
+    cbsLitString = "litStr"
 
     # expressions
     cbsInfix = "infix"
@@ -93,7 +93,7 @@ let foo = """
       (param (typPtrPtr typChar) "argv")
     )
     (blk
-      (call "puts" (litStr "Hello, World!"))
+      (call "puts" ((litStr "Hello, World!")))
     )
   )
 ))"""
@@ -146,6 +146,12 @@ func parseType(frag: var CSrcFrag, stmt: SexpNode) =
   else:
     assert false, "unhandled type kind: " & $typK
 
+func reserveExtra(frag: var CSrcFrag, width: int) {.inline.} =
+  ## reserve `width` amount of nodes in `frag.extraNode`, used to pre-allocate
+  ## extra slots so they can be assigned during reduction
+  for _ in 1..width:
+    frag.extraNode.add -1
+
 func parseParam(frag: var CSrcFrag, param: SexpNode) =
   ## parse a `cbsParam` node, eg: (param (<type>) "name"):
   ##
@@ -170,12 +176,89 @@ func parseParam(frag: var CSrcFrag, param: SexpNode) =
   frag.node[id].width = frag.extraStr.len
   frag.extraStr.add param[namePos].str
 
-func parseBlk(frag: var CSrcFrag, body: SexpNode) =
+func parseExpr(frag: var CSrcFrag, expr: SexpNode) =
+  ## TOOD: finish implementing and documenting me
+  assert expr.kind == SList, $expr
+  assert expr.len >= 1
+
+  let kind = expr[0].symbol.toCBkndSrcKind.unsafeGet()
+
+  case kind
+  of cbsLitString:
+    let
+      id = frag.node.len
+      extraStrId = frag.extraStr.len
+    
+    frag.node.add CSrcFragNode(kind: kind, extraId: extraStrId)
+  else:
+    assert false, "IMPLEMENT ME"
+
+
+func parseStmt(frag: var CSrcFrag, stmt: SexpNode) =
+  ## parse a stmt of some sort
+  ##
+  ## TODO: finish implementing and documenting me
+  assert stmt.kind == SList, $stmt
+  assert stmt.len >= 1
+  assert stmt[0].kind == SSymbol
+
+  let kind = stmt[0].symbol.toCBkndSrcKind.unsafeGet()
+  
+  case kind
+  of cbsCall:
+    assert stmt.len == 3 # call, name, argsList
+
+    const
+      namePos = 1
+      argsPos = 2
+
+    let
+      id = frag.node.len
+      extraId = frag.extraNode.len
+      argCount = stmt[argsPos].len
+      width = argsPos + 1 # + 1 for the name
+      nameStrId = frag.extraStr.len
+    
+    frag.reserveExtra(width)
+
+    frag.node.add CSrcFragNode(kind: cbsCall, extraId: extraId, width: width)
+    frag.extraStr.add stmt[namePos].str
+    frag.extraNode[extraId] = nameStrId
+
+    for i, arg in stmt[argsPos].pairs:
+      frag.extraNode[extraId + 1 + i] = frag.node.len # + 1 for namePos
+      parseExpr(frag, arg)
+  else:
+    discard
+
+
+func parseBlk(frag: var CSrcFrag, blk: SexpNode) =
   ## parse a `cbsBlk` node (blk (<0..n|stmts>))
   ##
-  ## TODO: finish implementing me
-  assert false, "IMPLEMENT ME"
-  discard
+  ## TODO: finish implementing and documenting me
+  const blkSymPos = 0
+
+  assert blk.kind == SList
+  assert blk.len == 2
+  assert blk[blkSymPos].kind == SSymbol
+  assert blk[blkSymPos].symbol == $cbsBlock
+  assert blk[1].kind == SList
+  
+  let
+    id = frag.node.len
+    width = blk[1].len
+    extraId = frag.extraNode.len
+  frag.node.add CSrcFragNode(kind: cbsBlock, extraId: extraId, width: width)
+
+  frag.reserveExtra(width)
+
+  for i, stmt in blk.pairs:
+    case i
+    of blkSymPos:
+      discard
+    else:
+      frag.extraNode[extraId + i - 1] = frag.node.len # - 1 for `blk`
+      parseStmt(frag, stmt)
 
 func toCSrcFrag(s: SexpNode): CSrcFrag =
   var frag: CSrcFrag
@@ -198,35 +281,34 @@ func toCSrcFrag(s: SexpNode): CSrcFrag =
       let
         id = frag.node.len
         strId = frag.extraStr.len
+        params = stmt[paramsPos]
+        fnArity = params.len
+        extraId = frag.extraNode.len
+        bodyExtraId = extraId + fnArity + 1 # name, params, body
+        width = fnArity + 2 # + 2 for the name and body
       
-      frag.extraStr.add stmt[namePos].str
-      frag.node.add CSrcFragNode(kind: k, extraId: frag.extraNode.len)
+      frag.node.add CSrcFragNode(kind: k, extraId: extraId, width: width)
       
-      parseType(frag, stmt[typPos])
+      frag.reserveExtra(width)
 
-      let params = stmt[paramsPos]
+      frag.extraStr.add stmt[namePos].str
+      frag.extraNode[extraId] = strId
+
+      parseType(frag, stmt[typPos])
 
       assert params.kind == SList, $stmt
 
-      var fnArity = 0
-
-      case params.len
+      case fnArity
       of 0:
         discard
       else:
-        for maybeParam in params.items:
-          frag.extraNode.add(frag.node.len)
-          inc fnArity
+        for i, maybeParam in params.pairs:
+          frag.extraNode[extraId + 1 + i] = frag.node.len
           parseParam(frag, maybeParam)
 
-      # remember the body id and parse the body
-      frag.extraNode.add(frag.node.len) 
-      parseBlk(frag)
-
-      # set the node width to all the extra nodes we added (params + body)
-      frag.node[id].width = fnArity + 1 # the extra is for the body
-    of cbsDefBody:
-      assert false
+      # remember the body block id in extraNode and parse the body
+      frag.extraNode[extraId + fnArity + 1] = frag.node.len
+      parseBlk(frag, stmt[bodyPos])
     else:
       assert false
 
@@ -237,6 +319,8 @@ func toCSrcFrag(s: SexpNode): CSrcFrag =
       cSrcFragStmt(frag, k, c)
   else:
     assert false
+  
+  result = frag
 
 # func toCSrcFrag(s: SexpNode): CSrcFrag =
 #   case s.kind
