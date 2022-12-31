@@ -82,7 +82,7 @@ type
     cbsPreIfNDef = "preIfNDef"
     cbsPreElif   = "preElif"
     cbsPreElse   = "preElse"
-    cbsPreEndIf  = "preEndIf"
+    cbsPreEndIf  = "preEndIf"  # TODO: likely removable
 
 let foo = """
 (cfile foo (
@@ -112,17 +112,49 @@ type
 
   CBkndSrcTypKind = range[cbsTypVoid..cbsTypPtrPtr]
 
+
+func debug(frag: CSrcFrag): string =
+  result.add "extraNode: " & $frag.extraNode & "\n"
+  result.add "extraStr: " & $frag.extraStr & "\n"
+  result.add "tree:\n"
+  for i, n in frag.node.pairs:
+    result.add "$1$2:$3 " % ["  ", $n.kind, $i]
+    result.add "(extraId: $1, width: $2)" % [$n.extraId, $n.width]
+    result.add "\n"
+
+
+func `$`(frag: CSrcFrag): string =
+  # TODO: convert to a tree traversal while loop
+  var currId = 0
+
+  while currId < frag.node.len:
+    let
+      currNode = frag.node[currId]
+    
+    case currNode.kind
+    of cbsInclude:
+      result.add "include $1" % frag.extraStr[currNode.extraId]
+    of cbsFuncDef:
+      result.add
+    else:
+      assert false, "Traversal not implemented for kind: " & $currNode.kind
+
+    result.add "\n"
+    inc currId
+
 func toCBkndSrcKind(s: string): Option[CBkndSrcKind] =
   for e in CBkndSrcKind.items:
     if $e == s:
       result = some(e)
       return
 
+
 func toCBkndSrcTypKind(s: string): Option[CBkndSrcTypKind] =
   for e in CBkndSrcTypKind.items:
     if $e == s:
       result = some(e)
       return
+
 
 func parseType(frag: var CSrcFrag, stmt: SexpNode) =
   ## parse a type node, eg: (typInt):
@@ -146,11 +178,13 @@ func parseType(frag: var CSrcFrag, stmt: SexpNode) =
   else:
     assert false, "unhandled type kind: " & $typK
 
-func reserveExtra(frag: var CSrcFrag, width: int) {.inline.} =
+
+func reserveExtra(frag: var CSrcFrag, owner: CSrcNodeId, width: int) {.inline.} =
   ## reserve `width` amount of nodes in `frag.extraNode`, used to pre-allocate
   ## extra slots so they can be assigned during reduction
   for _ in 1..width:
-    frag.extraNode.add -1
+    frag.extraNode.add -owner
+
 
 func parseParam(frag: var CSrcFrag, param: SexpNode) =
   ## parse a `cbsParam` node, eg: (param (<type>) "name"):
@@ -175,6 +209,7 @@ func parseParam(frag: var CSrcFrag, param: SexpNode) =
   assert param[namePos].kind == SString
   frag.node[id].width = frag.extraStr.len
   frag.extraStr.add param[namePos].str
+
 
 func parseExpr(frag: var CSrcFrag, expr: SexpNode) =
   ## TOOD: finish implementing and documenting me
@@ -216,10 +251,10 @@ func parseStmt(frag: var CSrcFrag, stmt: SexpNode) =
       id = frag.node.len
       extraId = frag.extraNode.len
       argCount = stmt[argsPos].len
-      width = argsPos + 1 # + 1 for the name
+      width = argCount + 1 # + 1 for the name
       nameStrId = frag.extraStr.len
     
-    frag.reserveExtra(width)
+    frag.reserveExtra(id, width)
 
     frag.node.add CSrcFragNode(kind: cbsCall, extraId: extraId, width: width)
     frag.extraStr.add stmt[namePos].str
@@ -246,11 +281,11 @@ func parseBlk(frag: var CSrcFrag, blk: SexpNode) =
   
   let
     id = frag.node.len
-    width = blk[1].len
+    width = blk.len - 1
     extraId = frag.extraNode.len
   frag.node.add CSrcFragNode(kind: cbsBlock, extraId: extraId, width: width)
 
-  frag.reserveExtra(width)
+  frag.reserveExtra(id, width)
 
   for i, stmt in blk.pairs:
     case i
@@ -259,6 +294,7 @@ func parseBlk(frag: var CSrcFrag, blk: SexpNode) =
     else:
       frag.extraNode[extraId + i - 1] = frag.node.len # - 1 for `blk`
       parseStmt(frag, stmt)
+
 
 func toCSrcFrag(s: SexpNode): CSrcFrag =
   var frag: CSrcFrag
@@ -289,7 +325,7 @@ func toCSrcFrag(s: SexpNode): CSrcFrag =
       
       frag.node.add CSrcFragNode(kind: k, extraId: extraId, width: width)
       
-      frag.reserveExtra(width)
+      frag.reserveExtra(id, width)
 
       frag.extraStr.add stmt[namePos].str
       frag.extraNode[extraId] = strId
